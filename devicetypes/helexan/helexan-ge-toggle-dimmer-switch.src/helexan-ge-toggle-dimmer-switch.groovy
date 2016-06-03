@@ -8,6 +8,8 @@ metadata {
 		capability "Sensor"
         
         command "updateSettings"
+        command "deafultSettings"
+        command "instantSettings"
 
 		fingerprint inClusters: "0x26"
 	}
@@ -55,26 +57,29 @@ metadata {
 				attributeState "level", action:"switch level.setLevel"
 			}
 		}
-
+        
+        standardTile("device.speed", "device.speed", width: 2, height: 2, decoration: "flat", inactiveLabel: false, canChangeIcon: true) {
+            state "default", label: '${currentValue}',  action:"instantSettings",  nextState:"instant"
+            state "instant", label:'${currentValue}', action:"deafultSettings",   nextState:"default"
+            state "other", lable:'${currentValue}', action:"deafultSettings", nextState:"default"
+        }
 		standardTile("refresh", "device.switch", width: 2, height: 2, inactiveLabel: false, decoration: "flat") {
 			state "default", label:'', action:"refresh.refresh", icon:"st.secondary.refresh"
 		}
-
-		valueTile("level", "device.level", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
-			state "level", label:'${currentValue} %', unit:"%", backgroundColor:"#ffffff"
-		}
-
         
-        standardTile("updateSettings", "device.updateSettings", height: 2, width: 2, inactiveLabel: false, decoration: "flat") {
-        	state "default" , action:"updateSettings", icon:"st.secondary.configure"
+		standardTile("updateSettings", "device.speed", height: 2, width: 2, inactiveLabel: false, decoration: "flat") {
+        	state "update" , action:"updateSettings", icon:"st.secondary.configure", nextState:"other"
         }
+    
 
 
+
+
+		}
 		main(["switch"])
-		details(["switch", "level", "refresh", "updateSettings"])
+		details(["switch", "device.speed", "refresh","updateSettings"])
 
-	}
-}
+		}
 
 def parse(String description) {
 	def result = null
@@ -111,6 +116,7 @@ def zwaveEvent(physicalgraph.zwave.commands.switchmultilevelv1.SwitchMultilevelS
 }
 
 private dimmerEvents(physicalgraph.zwave.Command cmd) {
+	log.trace "dimmerEvents:: $cmd"
 	def value = (cmd.value ? "on" : "off")
 	def result = [createEvent(name: "switch", value: value)]
 	if (cmd.value && cmd.value <= 100) {
@@ -148,7 +154,7 @@ def zwaveEvent(physicalgraph.zwave.commands.switchmultilevelv1.SwitchMultilevelS
 
 def zwaveEvent(physicalgraph.zwave.Command cmd) {
 	// Handles all Z-Wave commands we aren't interested in
-    log.debug "Other Events $cmd"
+    log.trace "Other Events $cmd"
 	[:]
 }
 
@@ -192,6 +198,7 @@ def setLevel(value, duration) {
 
 def poll() {
 	zwave.switchMultilevelV1.switchMultilevelGet().format()
+
 }
 
 def refresh() {
@@ -201,22 +208,13 @@ def refresh() {
 	if (getDataValue("MSR") == null) {
 		commands << zwave.manufacturerSpecificV1.manufacturerSpecificGet().format()
 	}
+	
+	log.debug(zwave.switchMultilevelV1.switchMultilevelGet().format())
+	log.debug(zwave.configurationV1.configurationSet(configurationValue: [stepSize], parameterNumber: 7, size: 1).format())
+	log.debug(zwave.configurationV1.configurationSet(configurationValue: [stepDuration], parameterNumber: 8, size: 1).format())
+	log.debug(zwave.configurationV1.configurationSet(configurationValue: [manualStepSize], parameterNumber: 9, size: 1).format())
+	log.debug(zwave.configurationV1.configurationSet(configurationValue: [manualStepDuration], parameterNumber: 10, size: 1).format())
 	delayBetween(commands,100)
-}
-
-def indicatorWhenOn() {
-	sendEvent(name: "indicatorStatus", value: "when on")
-	zwave.configurationV1.configurationSet(configurationValue: [1], parameterNumber: 3, size: 1).format()
-}
-
-def indicatorWhenOff() {
-	sendEvent(name: "indicatorStatus", value: "when off")
-	zwave.configurationV1.configurationSet(configurationValue: [0], parameterNumber: 3, size: 1).format()
-}
-
-def indicatorNever() {
-	sendEvent(name: "indicatorStatus", value: "never")
-	zwave.configurationV1.configurationSet(configurationValue: [2], parameterNumber: 3, size: 1).format()
 }
 
 def invertSwitch(invert) {
@@ -231,6 +229,8 @@ def invertSwitch(invert) {
 def updateSettings() {
 	log.debug("Updating Switch Settings")
 	
+    sendEvent(name: "manual", value:"Manual Control")
+    
     //lets make sure we are in the the right ranges
     def stepSize = Math.max(Math.min(stepSize, 99), 1)
     def stepDuration = Math.max(Math.min(stepDuration, 255), 1)
@@ -242,6 +242,62 @@ def updateSettings() {
         cmds << zwave.configurationV1.configurationSet(configurationValue: [stepDuration], parameterNumber: 8, size: 1).format()
         cmds << zwave.configurationV1.configurationSet(configurationValue: [manualStepSize], parameterNumber: 9, size: 1).format()
         cmds << zwave.configurationV1.configurationSet(configurationValue: [manualStepDuration], parameterNumber: 10, size: 1).format()
+        
+        if (invertSwitch.toBoolean()) {
+		    cmds << zwave.configurationV1.configurationSet(configurationValue: [1], parameterNumber: 4, size: 1).format()
+		} else {
+			cmds << zwave.configurationV1.configurationSet(configurationValue: [0], parameterNumber: 4, size: 1).format()
+		}
+        
+        //Getting the new settings (check logs) -- Don't really use for anything else
+      
+        cmds << zwave.configurationV1.configurationGet(parameterNumber: 7).format()
+   		cmds << zwave.configurationV1.configurationGet(parameterNumber: 8).format()
+    	cmds << zwave.configurationV1.configurationGet(parameterNumber: 9).format()
+    	cmds << zwave.configurationV1.configurationGet(parameterNumber: 10).format()
+        cmds << zwave.configurationV1.configurationGet(parameterNumber: 4).format()
+    
+    delayBetween(cmds, 500)
+}
+
+def deafultSettings() {
+	log.debug("Updating Switch Settings to default")
+    
+    sendEvent(name: "default", value:"Deafult Speed")
+
+     def cmds = []
+        cmds << zwave.configurationV1.configurationSet(configurationValue: [1], parameterNumber: 7, size: 1).format()
+        cmds << zwave.configurationV1.configurationSet(configurationValue: [3], parameterNumber: 8, size: 1).format()
+        cmds << zwave.configurationV1.configurationSet(configurationValue: [1], parameterNumber: 9, size: 1).format()
+        cmds << zwave.configurationV1.configurationSet(configurationValue: [3], parameterNumber: 10, size: 1).format()
+        
+        if (invertSwitch.toBoolean()) {
+		    cmds << zwave.configurationV1.configurationSet(configurationValue: [1], parameterNumber: 4, size: 1).format()
+		} else {
+			cmds << zwave.configurationV1.configurationSet(configurationValue: [0], parameterNumber: 4, size: 1).format()
+		}
+        
+        //Getting the new settings (check logs) -- Don't really use for anything else
+      
+        cmds << zwave.configurationV1.configurationGet(parameterNumber: 7).format()
+   		cmds << zwave.configurationV1.configurationGet(parameterNumber: 8).format()
+    	cmds << zwave.configurationV1.configurationGet(parameterNumber: 9).format()
+    	cmds << zwave.configurationV1.configurationGet(parameterNumber: 10).format()
+        cmds << zwave.configurationV1.configurationGet(parameterNumber: 4).format()
+    
+    delayBetween(cmds, 500)
+}
+
+def instantSettings() {
+	log.debug("Updating Switch Settings to instant")
+    
+    sendEvent(name: "instant", value:"Instant Change")
+
+     def cmds = []
+        cmds << zwave.configurationV1.configurationSet(configurationValue: [99], parameterNumber: 7, size: 1).format()
+        cmds << zwave.configurationV1.configurationSet(configurationValue: [1], parameterNumber: 8, size: 1).format()
+        cmds << zwave.configurationV1.configurationSet(configurationValue: [99], parameterNumber: 9, size: 1).format()
+        cmds << zwave.configurationV1.configurationSet(configurationValue: [1], parameterNumber: 10, size: 1).format()
         
         if (invertSwitch.toBoolean()) {
 		    cmds << zwave.configurationV1.configurationSet(configurationValue: [1], parameterNumber: 4, size: 1).format()
